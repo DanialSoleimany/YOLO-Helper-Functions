@@ -382,3 +382,52 @@ def plot_random_images(root_dir: str, num_images: int = 5):
 
     plt.tight_layout()
     plt.show()
+
+def download_yolo_model(url: str, save_path: str):
+    """
+    Downloads a YOLO model weights file from a URL with a progress bar.
+    Skips the download if the file already exists at the destination.
+
+    Parameters:
+    url (str): The direct download link for the model (.pt or .onnx).
+    save_path (str): Local path where the model should be saved.
+
+    Example:
+    download_yolo_model("https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11m.pt", "models/yolo11m.pt")
+    """
+    save_path_obj = Path(save_path)
+    
+    # 1. Skip if already exists
+    if save_path_obj.exists():
+        print(f"✅ Model already exists at: {save_path}")
+        return
+
+    # 2. Prepare directory
+    save_path_obj.parent.mkdir(parents=True, exist_ok=True)
+    
+    # 3. Download with progress bar
+    try:
+        response = requests.get(url, stream=True)
+        response.raise_for_status() # Check for 404/500 errors
+        
+        total_size = int(response.headers.get('content-length', 0))
+        
+        print(f"📥 Downloading YOLO model to {save_path}...")
+        
+        with open(save_path, 'wb') as file, tqdm(
+            desc=save_path_obj.name,
+            total=total_size,
+            unit='iB',
+            unit_scale=True,
+            unit_divisor=1024,
+        ) as bar:
+            for data in response.iter_content(chunk_size=1024):
+                size = file.write(data)
+                bar.update(size)
+                
+        print(f"✨ Download complete: {save_path}")
+        
+    except Exception as e:
+        if save_path_obj.exists():
+            save_path_obj.unlink() # Delete partial download on failure
+        print(f"❌ Failed to download model: {e}")
