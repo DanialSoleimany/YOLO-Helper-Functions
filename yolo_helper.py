@@ -42,3 +42,35 @@ def clean_noise(root_dir: str, ksize: int = 3):
 
     except Exception as e:
         print(f"Error during noise cleanup: {e}")
+
+def read_yaml(file_path: str):
+    """
+    This function reads and parses a YAML file from the specified path.
+    It uses SafeLoader for secure parsing and handles common file and 
+    formatting errors.
+
+    Parameters:
+    file_path (str): The path to the YAML file to be read.
+
+    Returns:
+    dict: The contents of the YAML file as a Python dictionary if successful, 
+          otherwise None.
+
+    Example:
+    config = read_yaml('/kaggle/working/data.yaml')
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            # Use SafeLoader to avoid executing arbitrary code within the YAML file
+            data = yaml.load(file, Loader=yaml.SafeLoader)
+            return data
+            
+    except FileNotFoundError:
+        print(f"Error: The file at {file_path} was not found.")
+        return None
+    except yaml.YAMLError as exc:
+        print(f"Error parsing YAML file at {file_path}: {exc}")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred while reading {file_path}: {e}")
+        return None
