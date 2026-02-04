@@ -288,3 +288,101 @@ def plot_dataset_distribution(dataset_root: str):
     plt.grid(axis='y', linestyle='--', alpha=0.5)
     plt.tight_layout()
     plt.show()
+
+def plot_random_images(root_dir: str, num_images: int = 5):
+    """
+    Selects random images from the dataset, overlays YOLO bounding boxes, 
+    and displays them with labels. Handles automatic YAML 
+    discovery and image-to-label path mapping.
+
+    Parameters:
+    root_dir (str): The directory to search for images.
+    num_images (int): Number of random samples to display.
+
+    Example:
+    plot_random_images('/kaggle/working/dataset_path', num_images=4)
+    """
+    # 1. Automatic YAML Discovery (Search in root or parent)
+    root_path = Path(root_dir)
+    yaml_search = list(root_path.glob("*.yaml")) + list(root_path.parent.glob("*.yaml"))
+    
+    if not yaml_search:
+        print("❌ Error: YAML configuration file not found.")
+        return
+        
+    with open(yaml_search[0], 'r', encoding='utf-8') as f:
+        data = yaml.safe_load(f)
+    class_names = data.get('names', [])
+
+    # 2. Collect Image Paths
+    valid_exts = ('.jpg', '.jpeg', '.png', '.bmp')
+    image_paths = []
+    for subdir, _, files in os.walk(root_dir):
+        if 'images' in subdir.lower():
+            for file in files:
+                if file.lower().endswith(valid_exts):
+                    image_paths.append(os.path.join(subdir, file))
+
+    if not image_paths:
+        print(f"❌ No images found in: {root_dir}")
+        return
+
+    # 3. Selection and Plotting Setup
+    num_to_show = min(num_images, len(image_paths))
+    random_images = random.sample(image_paths, num_to_show)
+    
+    fig, axes = plt.subplots(1, num_to_show, figsize=(22, 10))
+    if num_to_show == 1: axes = [axes]
+
+    for i, img_path in enumerate(random_images):
+        img = cv2.imread(img_path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        h, w, _ = img.shape
+        ax = axes[i]
+
+        # 4. Map Image to Label Path
+        # Logic: find 'images' in path and replace with 'labels', change ext to .txt
+        file_name = os.path.basename(img_path)
+        img_name_no_ext = os.path.splitext(file_name)[0]
+        
+        # This handles your 'cleaned_' prefix replacement safely
+        label_name = img_name_no_ext.replace('cleaned_', '') + '.txt'
+        label_path = img_path.replace('/images/', '/labels/').replace(file_name, label_name)
+
+        if os.path.exists(label_path):
+            with open(label_path, 'r') as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) < 5: continue
+                    
+                    cls_id = int(float(parts[0]))
+                    x_c, y_c, bw, bh = map(float, parts[1:])
+                    
+                    # Convert YOLO normalized to Pixel coordinates
+                    x1 = int((x_c - bw/2) * w)
+                    y1 = int((y_c - bh/2) * h)
+                    x2 = int((x_c + bw/2) * w)
+                    y2 = int((y_c + bh/2) * h)
+
+                    # Draw Bounding Box
+                    cv2.rectangle(img, (x1, y1), (x2, y2), (50, 255, 50), 3)
+                    
+                    # 5. Persian Text Processing
+                    if cls_id < len(class_names):
+                        raw_name = class_names[cls_id]
+                        display_name = get_display(reshape(str(raw_name)))
+                    else:
+                        display_name = str(cls_id)
+                    
+                    # Positioning text above the box
+                    ax.text(int(x_c * w), y1 - 12, display_name, 
+                            fontsize=14, color='white', fontweight='bold',
+                            ha='center', va='bottom',
+                            bbox=dict(facecolor='green', alpha=0.7, edgecolor='none', boxstyle='round,pad=0.3'))
+
+        ax.imshow(img)
+        ax.set_title(file_name, fontsize=10)
+        ax.axis('off')
+
+    plt.tight_layout()
+    plt.show()
