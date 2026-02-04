@@ -431,3 +431,49 @@ def download_yolo_model(url: str, save_path: str):
         if save_path_obj.exists():
             save_path_obj.unlink() # Delete partial download on failure
         print(f"❌ Failed to download model: {e}")
+
+def save_dataset_yaml(config_dict, filename='data.yaml'):
+    """
+    Takes a dictionary of dataset information and saves it as a 
+    YOLO-compliant YAML file with full Unicode support.
+
+    Parameters:
+    config_dict (dict): The dictionary containing 'path', 'train', 'val', 'nc', 'names', etc.
+    filename (str): The name/path of the YAML file to be created. Defaults to 'data.yaml'.
+
+    Example:
+    >>> dataset_info = {
+    ...     'path': '/kaggle/working/data',
+    ...     'train': 'train/images',
+    ...     'val': 'val/images',
+    ...     'nc': 3,
+    ...     'names': ['class_A', 'class_B', 'class_C']
+    ... }
+    >>> save_dataset_yaml(dataset_info)
+
+    Notes:
+    - Automatically creates the parent directory if it doesn't exist.
+    - Uses 'allow_unicode=True' to ensure Persian/Arabic characters remain readable.
+    - Sets 'sort_keys=False' to preserve the logical order of your configuration.
+    """
+    # 1. Determine the save path
+    # If a path is provided in the dict, we use it as the base
+    root_dir = config_dict.get('path', '.')
+    save_path = Path(root_dir) / filename
+
+    # 2. Ensure the parent directory exists
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 3. Write the YAML
+    try:
+        with open(save_path, 'w', encoding='utf-8') as f:
+            yaml.dump(
+                config_dict, 
+                f, 
+                allow_unicode=True, 
+                default_flow_style=False, 
+                sort_keys=False
+            )
+        print(f"✅ YAML successfully created at: {save_path}")
+    except Exception as e:
+        print(f"❌ Error writing YAML: {e}")
