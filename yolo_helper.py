@@ -173,22 +173,25 @@ def scan_yolo_labels(dataset_root: str):
 
 def plot_dataset_distribution(dataset_root: str):
     """
-    Scans the dataset root for split subfolders (train, val, etc.), locates 
-    the 'labels' folder within each, and generates a grouped bar chart 
-    comparing class distributions across all splits. Labels are displayed 
-    vertically with extra padding for clarity.
+    Dynamically discovers any subdirectories containing a 'labels' folder within 
+    the dataset root and generates a grouped bar chart comparing class 
+    distributions across these discovered splits.
 
     Parameters:
-    dataset_root (str): The root directory of the YOLO dataset.
+    dataset_root (str): The root directory to scan for YOLO-style splits.
 
     Example:
-    plot_dataset_distribution('/kaggle/working/balanced_alphabet_dataset')
+    plot_dataset_distribution('/kaggle/working/my_custom_dataset')
+    
+    Notes:
+    - Automatically finds YAML in the root or one level up.
+    - Scans for any folder containing a 'labels' sub-directory.
+    - Displays instance counts vertically with clear spacing.
     """
     root = Path(dataset_root)
-    splits_to_check = ["train", "val", "valid", "test"]
     
     # 1. Detect YAML and Class Names
-    yaml_files = list(root.glob("*.yaml")) + list(root.glob("*.yml"))
+    yaml_files = list(root.glob("*.yaml")) + list(root.glob("*.yml")) + list(root.parent.glob("*.yaml"))
     class_names = []
     if yaml_files:
         try:
@@ -199,19 +202,23 @@ def plot_dataset_distribution(dataset_root: str):
         except Exception as e:
             print(f"⚠️ Warning: Found YAML but failed to parse: {e}")
 
-    # 2. Collect Data across splits
+    # 2. Dynamic Split Discovery
+    # We look for all 'labels' directories and treat their parent as the split name
     all_data = {} 
-    found_splits = []
+    label_dirs = list(root.rglob("labels"))
     
-    for sp in splits_to_check:
-        label_dir = root / sp / "labels"
-        if not label_dir.exists():
+    if not label_dirs:
+        print(f"❌ Error: No 'labels' subdirectories found in {dataset_root}.")
+        return
+
+    for ld in label_dirs:
+        split_name = ld.parent.name
+        counts = Counter()
+        label_files = list(ld.glob("*.txt"))
+        
+        if not label_files:
             continue
             
-        found_splits.append(sp)
-        counts = Counter()
-        label_files = list(label_dir.rglob("*.txt"))
-        
         for p in label_files:
             try:
                 content = p.read_text(encoding="utf-8", errors="ignore")
@@ -224,12 +231,10 @@ def plot_dataset_distribution(dataset_root: str):
                         except ValueError: continue
             except Exception: continue
         
-        all_data[sp] = counts
-        print(f"🔎 Scanned {sp}: found {len(label_files)} label files.")
+        all_data[split_name] = counts
+        print(f"🔎 Scanned Split [{split_name}]: found {len(label_files)} label files.")
 
-    if not all_data:
-        print(f"❌ Error: No label data found in {dataset_root}.")
-        return
+    found_splits = sorted(all_data.keys())
 
     # 3. Prepare Data for Plotting
     found_ids = []
@@ -249,9 +254,7 @@ def plot_dataset_distribution(dataset_root: str):
     width = 0.85 / len(found_splits)
     colors = sns.color_palette("muted", len(found_splits))
     
-    # Calculate offset for space between bar and text
     max_val = max([max(c.values()) if c else 0 for c in all_data.values()])
-    # Increase the multiplier (0.02) to add more space from the bar
     y_offset = max_val * 0.02
 
     for i, sp in enumerate(found_splits):
@@ -261,7 +264,6 @@ def plot_dataset_distribution(dataset_root: str):
         
         bars = plt.bar(pos, values, width, label=sp.upper(), color=colors[i], edgecolor='black', alpha=0.8)
         
-        # Add numeric labels VERTICALLY with spacing
         for bar in bars:
             height = bar.get_height()
             if height > 0:
@@ -269,26 +271,20 @@ def plot_dataset_distribution(dataset_root: str):
                     bar.get_x() + bar.get_width()/2, 
                     height + y_offset, 
                     f'{int(height):,}', 
-                    ha='center', 
-                    va='bottom', 
-                    fontsize=9, 
-                    rotation=90,  # Vertical
-                    fontweight='bold'
+                    ha='center', va='bottom', fontsize=9, rotation=90, fontweight='bold'
                 )
 
-    # Styling
     plt.title(f'Multi-Split Class Distribution: {root.name}', fontsize=22, fontweight='bold', pad=40)
     plt.xlabel('Characters (Persian)', fontsize=16, fontweight='bold')
     plt.ylabel('Instance Count', fontsize=16, fontweight='bold')
     plt.xticks(indices, labels, rotation=0, fontsize=13)
-    plt.legend(fontsize=14, title="Dataset Splits", title_fontsize='13', shadow=True)
+    plt.legend(fontsize=14, title="Discovered Splits", title_fontsize='13', shadow=True)
     
-    # Increase limit more to accommodate vertical text height
     plt.ylim(0, max_val * 1.3) 
     plt.grid(axis='y', linestyle='--', alpha=0.5)
     plt.tight_layout()
     plt.show()
-
+    
 def plot_random_images(root_dir: str, num_images: int = 5):
     """
     Selects random images from the dataset, overlays YOLO bounding boxes, 
