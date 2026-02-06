@@ -1,3 +1,20 @@
+import os
+import cv2
+import yaml
+import random
+import requests
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+from pathlib import Path
+from tqdm.auto import tqdm
+from collections import Counter
+
+# Special libraries for Persian/Arabic text rendering in plots
+from bidi.algorithm import get_display
+from arabic_reshaper import reshape
+
 def clean_noise(root_dir: str, ksize: int = 3):
     """
     This function traverses through a directory and its subdirectories to remove 
