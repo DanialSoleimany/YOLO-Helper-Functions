@@ -686,3 +686,136 @@ def filter_yolo_dataset(root_path_str: str, classes_to_keep: List[int]):
     print(f"Total Labels After:   {final_stats['labels']}")
     print(f"Diff:                 {final_stats['labels'] - initial_stats['labels']}")
     print(f"{'='*40}")
+
+def visualize_single_class_samples(image_dir, label_dir, yaml_path, samples_per_class=3):
+    """
+    Visualizes samples for every class, drawing ONLY the bounding box relevant 
+    to that specific class (ignoring other objects in the same image).
+    """
+    
+    # 1. Load Class Names from YAML
+    if not os.path.exists(yaml_path):
+        print(f"Error: YAML file not found at {yaml_path}")
+        return
+
+    with open(yaml_path, 'r') as f:
+        data = yaml.safe_load(f)
+    
+    # Handle 'names' (list or dict)
+    names_data = data.get('names', {})
+    class_names = {}
+    if isinstance(names_data, list):
+        class_names = {i: name for i, name in enumerate(names_data)}
+    elif isinstance(names_data, dict):
+        class_names = {int(k): v for k, v in names_data.items()}
+
+    # 2. Map Classes to Images
+    class_to_images = defaultdict(list)
+    valid_img_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
+    
+    print("[*] Scanning label files...")
+    label_files = list(Path(label_dir).glob('*.txt'))
+    
+    # Pre-scan to group images by class
+    for label_file in label_files:
+        # Find corresponding image
+        img_path = None
+        for ext in valid_img_exts:
+            potential_path = Path(image_dir) / (label_file.stem + ext)
+            if potential_path.exists():
+                img_path = str(potential_path)
+                break
+        
+        if not img_path: continue
+
+        # Read file to find which classes are present
+        with open(label_file, 'r') as f:
+            unique_classes_in_this_file = set()
+            for line in f:
+                parts = line.strip().split()
+                if not parts: continue
+                try:
+                    cls_id = int(parts[0])
+                    if cls_id not in unique_classes_in_this_file:
+                        class_to_images[cls_id].append(img_path)
+                        unique_classes_in_this_file.add(cls_id)
+                except ValueError:
+                    continue
+
+    # 3. Setup Plot
+    available_classes = sorted(class_to_images.keys())
+    num_classes = len(available_classes)
+    
+    if num_classes == 0:
+        print("[!] No classes found.")
+        return
+
+    print(f"[*] Visualizing {num_classes} classes (ONLY target labels shown)...")
+
+    # Dynamic figure height
+    fig_height = num_classes * 3.5
+    fig_width = samples_per_class * 4
+    
+    fig, axes = plt.subplots(nrows=num_classes, ncols=samples_per_class, 
+                             figsize=(fig_width, fig_height), 
+                             squeeze=False)
+
+    # 4. Draw
+    for row_idx, target_cls_id in enumerate(available_classes):
+        # Get class name
+        target_cls_name = class_names.get(target_cls_id, f"Class {target_cls_id}")
+        
+        # Get random samples for THIS class
+        all_images = class_to_images[target_cls_id]
+        n_samples = min(samples_per_class, len(all_images))
+        selected_imgs = random.sample(all_images, n_samples)
+        
+        for col_idx in range(samples_per_class):
+            ax = axes[row_idx, col_idx]
+            ax.axis('off') # Hide axes
+
+            if col_idx < n_samples:
+                img_path = selected_imgs[col_idx]
+                
+                # Load Image
+                img = cv2.imread(img_path)
+                if img is None: continue
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                h, w, _ = img.shape
+                
+                # Draw Boxes
+                label_path = os.path.join(label_dir, Path(img_path).stem + '.txt')
+                if os.path.exists(label_path):
+                    with open(label_path, 'r') as f:
+                        for line in f:
+                            data = line.strip().split()
+                            if len(data) >= 5:
+                                box_cls_id = int(data[0])
+                                
+                                # --- KEY CHANGE IS HERE ---
+                                # Only draw if the box class matches the current row's class
+                                if box_cls_id == target_cls_id:
+                                    cx, cy, bw, bh = map(float, data[1:5])
+                                    
+                                    x1 = int((cx - bw/2) * w)
+                                    y1 = int((cy - bh/2) * h)
+                                    x2 = int((cx + bw/2) * w)
+                                    y2 = int((cy + bh / 2) * h)
+                                    
+                                    # Draw Box (Green)
+                                    cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                                    
+                                    # Draw Text
+                                    label_text = class_names.get(box_cls_id, str(box_cls_id))
+                                    cv2.putText(img, label_text, (x1, y1 - 8), 
+                                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+                ax.imshow(img)
+                
+                # Set Title only on the first column
+                if col_idx == 0:
+                    ax.set_title(f"ID: {target_cls_id} | {target_cls_name}", 
+                                 fontsize=12, loc='left', color='blue', fontweight='bold')
+
+    plt.tight_layout()
+    plt.show()
