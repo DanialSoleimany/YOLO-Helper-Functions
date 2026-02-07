@@ -494,3 +494,195 @@ def save_dataset_yaml(config_dict, filename='data.yaml'):
         print(f"✅ YAML successfully created at: {save_path}")
     except Exception as e:
         print(f"❌ Error writing YAML: {e}")
+
+def count_files(root_dir: Path, subsets: List[str]) -> Dict[str, int]:
+    """
+    Counts the total number of images and label files in the dataset.
+    """
+    stats = {'images': 0, 'labels': 0}
+    img_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp'}
+    
+    for subset in subsets:
+        # Check for 'valid' or 'val'
+        if subset == 'val' and not (root_dir / subset).exists():
+            if (root_dir / 'valid').exists():
+                subset = 'valid'
+        
+        label_dir = root_dir / subset / 'labels'
+        img_dir = root_dir / subset / 'images'
+        
+        if label_dir.exists():
+            stats['labels'] += len(list(label_dir.glob('*.txt')))
+        
+        if img_dir.exists():
+            # Count files with valid image extensions
+            for f in img_dir.iterdir():
+                if f.suffix.lower() in img_exts:
+                    stats['images'] += 1
+                    
+    return stats
+
+def filter_yolo_dataset(root_path_str: str, classes_to_keep: List[int]):
+    """
+    Filters a YOLO dataset, keeping only specific classes, re-indexing them,
+    and removing empty samples. Reports file counts before and after.
+    """
+    
+    # 1. Setup Paths
+    root_dir = Path(root_path_str).resolve()
+    if not root_dir.exists():
+        print(f"[Error] Root directory not found: {root_dir}")
+        return
+
+    print(f"{'='*40}")
+    print(f"[*] Dataset Root: {root_dir}")
+    
+    # 2. Setup Class Mapping
+    classes_to_keep = sorted(list(set(classes_to_keep)))
+    idx_mapping = {old_idx: new_idx for new_idx, old_idx in enumerate(classes_to_keep)}
+    
+    print(f"[*] Keeping Classes (Old Indices): {classes_to_keep}")
+    print(f"[*] Re-indexing Map: {idx_mapping}")
+
+    subsets = ['train', 'val', 'test']
+    
+    # --- STEP 1: COUNT BEFORE ---
+    print(f"\n[*] Counting files BEFORE filtering...")
+    initial_stats = count_files(root_dir, subsets)
+    print(f"    Images: {initial_stats['images']}")
+    print(f"    Labels: {initial_stats['labels']}")
+
+    # 3. Processing Loop
+    stats = {'scanned': 0, 'deleted': 0, 'modified': 0}
+    valid_img_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp'}
+
+    for subset in subsets:
+        # Handle 'val' vs 'valid' naming convention
+        current_subset = subset
+        if subset == 'val' and not (root_dir / subset).exists():
+            if (root_dir / 'valid').exists():
+                current_subset = 'valid'
+        
+        label_dir = root_dir / current_subset / 'labels'
+        img_dir = root_dir / current_subset / 'images'
+        
+        if not label_dir.exists():
+            continue
+
+        print(f"\n--- Processing Subset: {current_subset} ---")
+        
+        label_files = list(label_dir.glob('*.txt'))
+        
+        for label_file in tqdm(label_files, desc=f"Filtering {current_subset}"):
+            stats['scanned'] += 1
+            
+            with open(label_file, 'r') as f:
+                lines = f.readlines()
+
+            new_lines = []
+            has_valid_class = False
+
+            for line in lines:
+                parts = line.strip().split()
+                if not parts: continue
+                
+                try:
+                    cls_id = int(parts[0])
+                    # Check if class is in our whitelist
+                    if cls_id in classes_to_keep:
+                        # Remap to new index (0, 1, 2...)
+                        new_id = idx_mapping[cls_id]
+                        parts[0] = str(new_id)
+                        new_lines.append(" ".join(parts) + "\n")
+                        has_valid_class = True
+                except ValueError:
+                    continue
+
+            # Decision: Delete or Update
+            if not has_valid_class:
+                # Delete Label
+                label_file.unlink()
+                
+                # Delete Image
+                stem = label_file.stem
+                img_deleted = False
+                for ext in valid_img_exts:
+                    img_path = img_dir / (stem + ext)
+                    if img_path.exists():
+                        img_path.unlink()
+                        break
+                
+                stats['deleted'] += 1
+            else:
+                # Rewrite file if content changed (optimization)
+                original_content = "".join(lines)
+                new_content = "".join(new_lines)
+                
+                if original_content != new_content:
+                    with open(label_file, 'w') as f:
+                        f.writelines(new_lines)
+                    stats['modified'] += 1
+
+    # --- STEP 2: COUNT AFTER ---
+    print(f"\n[*] Counting files AFTER filtering...")
+    final_stats = count_files(root_dir, subsets)
+
+    # 4. Update data.yaml
+    yaml_path = root_dir / 'data.yaml'
+    new_names_list = []
+    
+    if yaml_path.exists():
+        with open(yaml_path, 'r') as f:
+            data = yaml.safe_load(f)
+        
+        old_names = data.get('names')
+        
+        # Robust Name Extraction
+        for old_idx in classes_to_keep:
+            name = None
+            if isinstance(old_names, list):
+                if old_idx < len(old_names):
+                    name = old_names[old_idx]
+            elif isinstance(old_names, dict):
+                # Try int key first, then string key
+                name = old_names.get(old_idx) or old_names.get(str(old_idx))
+            
+            # Fallback if name is missing in original YAML
+            if name is None:
+                name = f"class_{old_idx}"
+            
+            new_names_list.append(name)
+
+        # Update YAML structure
+        # Convert list to dict for safety (YOLO supports both, dict is explicit)
+        data['names'] = {i: n for i, n in enumerate(new_names_list)}
+        data['nc'] = len(new_names_list)
+        
+        # Fix paths to absolute to prevent future errors
+        if 'train' in data: data['train'] = str(root_dir / 'train' / 'images')
+        if 'val' in data: data['val'] = str(root_dir / 'valid' / 'images')
+        if 'valid' in data: data['valid'] = str(root_dir / 'valid' / 'images')
+        if 'test' in data: data['test'] = str(root_dir / 'test' / 'images')
+
+        with open(yaml_path, 'w') as f:
+            yaml.dump(data, f, sort_keys=False)
+            
+        print(f"[*] Updated YAML: {yaml_path}")
+        print(f"[*] New Class Names: {new_names_list}")
+
+    # 5. Final Report
+    print(f"\n{'='*40}")
+    print(f"       SUMMARY REPORT       ")
+    print(f"{'='*40}")
+    print(f"Files Scanned:        {stats['scanned']}")
+    print(f"Modified Labels:      {stats['modified']}")
+    print(f"Deleted Samples:      {stats['deleted']} (Image + Label pairs)")
+    print(f"{'-'*40}")
+    print(f"Total Images Before:  {initial_stats['images']}")
+    print(f"Total Images After:   {final_stats['images']}")
+    print(f"Diff:                 {final_stats['images'] - initial_stats['images']}")
+    print(f"{'-'*40}")
+    print(f"Total Labels Before:  {initial_stats['labels']}")
+    print(f"Total Labels After:   {final_stats['labels']}")
+    print(f"Diff:                 {final_stats['labels'] - initial_stats['labels']}")
+    print(f"{'='*40}")
