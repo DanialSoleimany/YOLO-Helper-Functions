@@ -821,3 +821,133 @@ def visualize_single_class_samples(image_dir, label_dir, yaml_path, samples_per_
 
     plt.tight_layout()
     plt.show()
+
+def convert_seg_to_detection_in_place(dataset_root: str) -> None:
+    """
+    Converts YOLO instance segmentation labels to object detection bounding box format
+    **in place** — directly overwrites the original label files.
+
+    Only processes the standard YOLO dataset subfolders:
+        - train/labels
+        - valid/labels (or val/labels)
+        - test/labels
+
+    No other folders are touched.
+
+    For each label file:
+    - Reads segmentation polygons (class + normalized x1 y1 x2 y2 ... xn yn)
+    - Computes the tightest axis-aligned bounding box (min/max coordinates)
+    - Rewrites the file in standard YOLO detection format:
+      class x_center y_center width height (all normalized)
+
+    Args:
+        dataset_root (str): Path to the root of the YOLO dataset folder
+                            (should contain train/, valid/ or val/, test/, and data.yaml)
+
+    Returns:
+        None — modifies files directly on disk and prints summary
+
+    Example:
+        convert_seg_to_detection_in_place("/kaggle/working/my_dataset")
+        convert_seg_to_detection_in_place("/path/to/your/dataset")
+    """
+    root = Path(dataset_root).resolve()
+    if not root.exists() or not root.is_dir():
+        print(f"Error: Dataset root directory not found → {root}")
+        return
+
+    # Only these standard subfolders will be processed
+    possible_subsets = ["train", "valid", "val", "test"]
+
+    print(f"Starting label conversion in: {root}")
+    print("Only processing subfolders: train / valid / val / test\n")
+
+    total_files_processed = 0
+    files_converted = 0
+    files_skipped = 0
+    files_with_errors = 0
+
+    for subset in possible_subsets:
+        labels_dir = root / subset / "labels"
+
+        if not labels_dir.exists() or not labels_dir.is_dir():
+            print(f"→ Labels folder not found: {labels_dir}")
+            continue
+
+        print(f"\nProcessing: {subset}/labels")
+
+        label_files = list(labels_dir.glob("*.txt"))
+        if not label_files:
+            print("   No .txt files found")
+            continue
+
+        for label_path in tqdm(label_files, desc=f"  {subset}"):
+            total_files_processed += 1
+
+            try:
+                with open(label_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+
+                new_lines = []
+                file_was_modified = False
+
+                for line in lines:
+                    parts = line.strip().split()
+                    if len(parts) < 5:  # class + at least 2 points (4 coords)
+                        new_lines.append(line)
+                        continue
+
+                    class_id = parts[0]
+                    coords = [float(x) for x in parts[1:]]
+
+                    # Segmentation coords must be even (x,y pairs)
+                    if len(coords) % 2 != 0:
+                        new_lines.append(line)
+                        continue
+
+                    xs = coords[0::2]
+                    ys = coords[1::2]
+
+                    if not xs or not ys:
+                        continue
+
+                    # Calculate tight bounding box
+                    x_min, x_max = min(xs), max(xs)
+                    y_min, y_max = min(ys), max(ys)
+
+                    x_center = (x_min + x_max) / 2
+                    y_center = (y_min + y_max) / 2
+                    width = x_max - x_min
+                    height = y_max - y_min
+
+                    # Clamp values to valid [0, 1] range
+                    x_center = max(0.0, min(1.0, x_center))
+                    y_center = max(0.0, min(1.0, y_center))
+                    width = max(0.0, min(1.0, width))
+                    height = max(0.0, min(1.0, height))
+
+                    # New detection-format line
+                    new_line = f"{class_id} {x_center:.6f} {y_center:.6f} {width:.6f} {height:.6f}\n"
+                    new_lines.append(new_line)
+                    file_was_modified = True
+
+                # Overwrite file only if content changed
+                if file_was_modified:
+                    with open(label_path, "w", encoding="utf-8") as f:
+                        f.writelines(new_lines)
+                    files_converted += 1
+                else:
+                    files_skipped += 1
+
+            except Exception as e:
+                print(f"  Error processing {label_path.name}: {e}")
+                files_with_errors += 1
+
+    print("\n" + "=" * 60)
+    print("CONVERSION SUMMARY")
+    print("=" * 60)
+    print(f"Total label files processed : {total_files_processed}")
+    print(f"Files converted/overwritten  : {files_converted}")
+    print(f"Files skipped (no change)    : {files_skipped}")
+    print(f"Files with errors            : {files_with_errors}")
+    print("=" * 60)
