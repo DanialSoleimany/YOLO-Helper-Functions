@@ -7,6 +7,7 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 from typing import List, Dict
+from collections import defaultdict
 
 from pathlib import Path
 from tqdm.auto import tqdm
