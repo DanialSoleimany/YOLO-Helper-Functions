@@ -6,6 +6,7 @@ import requests
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+from typing import List, Dict
 
 from pathlib import Path
 from tqdm.auto import tqdm
